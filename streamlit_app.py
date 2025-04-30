@@ -4,18 +4,21 @@ import numpy as np
 from sentence_transformers import SentenceTransformer, util
 import torch
 
-
-# embedding1 = model.encode("Plot of non-anime show")
-# embedding2 = model.encode("Plot of anime show")
-
-# similarity = util.cos_sim(embedding1, embedding2)
-
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 tv_df = pd.read_csv("data/non_anime.csv")
 anime_df = pd.read_csv("data/anime_metadata.csv")
 
-def recommend_anime(user_inputs):
+def score_to_color(score):
+    norm_score = max(0, min(score / 100, 1))
+
+    red = int(255 * (1 - norm_score))
+    green = int(255 * norm_score)
+    color = f'rgb({red},{green},0)'
+
+    return color
+
+def recommend_anime(user_inputs, k=5):
     user_show_descriptions = tv_df[tv_df['title'].isin(user_inputs)]['overview'].tolist()
 
     anime_embeddings = model.encode(anime_df['description'].tolist(), convert_to_tensor=True)
@@ -25,96 +28,83 @@ def recommend_anime(user_inputs):
     user_embedding = torch.mean(user_embeddings, dim=0).unsqueeze(0)
     similarities = util.cos_sim(user_embedding, anime_embeddings)[0]
     average_scores_tensor = torch.tensor(anime_df["average_score"].values, dtype=torch.float32)
-    top_k = torch.topk(similarities * average_scores_tensor, k=5).indices
+    top_k = torch.topk(similarities, k).indices
 
     recommend_animes = anime_df.iloc[top_k].copy()
 
     return recommend_animes
 
-# App layout
 st.set_page_config(page_title="Anime Recommender for Non-Anime Fans", layout="wide")
 
 st.title("🎌 Anime Recommendations for Non-Anime Viewers")
 st.markdown("""
-Welcome! This tool recommends **anime shows or movies** based on the **non-anime content you already enjoy**.
+Welcome! This tool recommends anime shows or movies based on shows you already enjoy. 
 
-This project explores the globalization of anime by drawing connections between anime and mainstream Western media.
+This project explores the globalization of anime by drawing connections between anime and mainstream Western media. How do your preferences in western shows align with your taste in anime?
+We use natural language processing to analyze the plot descriptions of both anime and non-anime shows, allowing us to find similarities in themes, genres, and tones.
 """)
 
-# Create a Streamlit selection component for users to choose multiple titles
 st.title('Select Shows/Movies You Enjoy')
 
-# Use the multiselect widget to allow multiple selections
-selected_titles = st.multiselect(
-    'Pick the shows or movies you enjoy:',
-    options=tv_df['title'].tolist(),
-    default=[]  # Default selection, can be customized
-)
+row1, row2 = st.columns([4, 1])
 
-# Show selected titles
-if selected_titles:
-    st.write(f"You selected {len(selected_titles)} titles:")
-    for title in selected_titles:
-        col1, col2 = st.columns([2, 3])  # Adjust column widths as needed
 
-        with col1:
-            st.write(f"**{title}**")
-        with col2: 
-            st.write(tv_df[tv_df['title'] == title]['overview'].values[0])
-else:
+with row1:
+    selected_titles = st.multiselect(
+        'Pick the shows or movies you enjoy:',
+        options=tv_df['title'].tolist(),
+        default=[]  
+    )
+with row2:
+    num_recommendations = st.number_input(
+        'Number of recommendations to generate:',
+        min_value=1,
+        max_value=20,
+        value=5,
+        step=1
+    )
+
+if not selected_titles:
     st.write("No shows/movies selected.")
 
 if st.button("Generate Recommendations"):
     if selected_titles:
-        recommended = recommend_anime(selected_titles)
+        recommended = recommend_anime(selected_titles, k=num_recommendations)
         if not recommended.empty:
             for i, row in recommended.iterrows():
-                # Create a row with 3 columns
-                col1, col2 = st.columns([2, 3])  # Adjust column widths as needed
+                col1, col2 = st.columns([2, 3])
 
-                # Column 1: Image
                 with col1:
                     st.write(f"**{row['english_title']}**")
                     st.image(row['image_url'], use_container_width=True)
 
-                # Column 2: Title and Description
                 with col2:
+                    innercol1, innercol2, innercol3 = st.columns([2, 3, 3])
+                    with innercol1:
+                        st.write("**Score:**")
+                        score = row['average_score']
+                        color = score_to_color(score)
+                        st.markdown(f"<span style='color:{color}; font-weight:bold'>{score}</span>", unsafe_allow_html=True)
+                    with innercol2:
+                        st.write("**Genres:**")
+                        st.write(row['genres'])
+                    with innercol3:
+                        st.write("**Airing Date:**")
+                        st.write(f"{row['start_date']} to {row['end_date']}")
+
                     st.write(row['description'])
 
-                st.markdown("---")  # Add a separator between rows
+                st.markdown("---")
         else:
             st.write("Issue with generating recommendations.")
     else:
         st.write("Please select at least one title to get recommendations.")
 
 
-
-# # Input form
-# with st.form("recommendation_form"):
-#     st.subheader("Tell us what you watch 🎥📺")
-#     user_shows = st.text_area("Enter a list of non-anime films or TV shows you enjoy (separated by commas)", 
-#                               placeholder="e.g. Breaking Bad, The Witcher, Black Mirror")
-
-#     submit = st.form_submit_button("Recommend me anime!")
-
-# # When the form is submitted
-# if submit and user_shows:
-#     st.subheader("🔍 Recommendations Based on Your Input")
-    
-#     # Convert user input into list
-#     user_inputs = [s.strip() for s in user_shows.split(",") if s.strip()]
-    
-#     # Generate recommendations (replace with your own function)
-#     recommendations = recommend_anime(user_inputs)
-    
-#     # Display results
-#     st.dataframe(recommendations)
-#     st.markdown("✍️ *These recommendations are based on shared themes, tone, or genre similarities.*")
-
 st.markdown("---")
-st.markdown("👩‍💻 **About this project**")
+st.markdown("**About this project**")
 st.markdown("""
 This project was created as a final project for an anime course, exploring how anime's themes and genres align with global media trends. 
 
-It uses data from **IMDb** and **MyAnimeList**, and is built with **Python** and **Streamlit**.
+It uses data scraped using the AniList API and TMDB API, and is built with **Python** and **Streamlit**.
 """)
